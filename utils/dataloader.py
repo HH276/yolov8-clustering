@@ -11,7 +11,8 @@ from utils.utils import cvtColor, preprocess_input
 
 class YoloDataset(Dataset):
     def __init__(self, annotation_lines, input_shape, num_classes, epoch_length, \
-                 mosaic, mixup, mosaic_prob, mixup_prob, train, special_aug_ratio=0.7):
+                 mosaic, mixup, mosaic_prob, mixup_prob, train, special_aug_ratio=0.7,
+                 style_cache=None):
         super(YoloDataset, self).__init__()
         self.annotation_lines = annotation_lines
         self.input_shape = input_shape
@@ -23,6 +24,12 @@ class YoloDataset(Dataset):
         self.mixup_prob = mixup_prob
         self.train = train
         self.special_aug_ratio = special_aug_ratio
+        self.style_cache = style_cache
+        if self.style_cache is not None and (mosaic or mixup):
+            raise ValueError(
+                "Offline style routing requires mosaic=False and mixup=False because "
+                "synthetic images have no cached clustering distance."
+            )
 
         self.epoch_now = -1
         self.length = len(self.annotation_lines)
@@ -68,7 +75,17 @@ class YoloDataset(Dataset):
         # image1_trip, labels_out1_trip = self.gt_preprocess(image=image1_trip, box=box1_trip)  # 印度
         # image2_trip, labels_out2_trip = self.gt_preprocess(image=image2_trip, box=box2_trip)  # 美国
 
-        return image0, labels_out0, image1, labels_out1, image2, labels_out2,
+        if self.style_cache is None:
+            return image0, labels_out0, image1, labels_out1, image2, labels_out2,
+
+        image_paths = [part.split()[0] for part in self.annotation_lines[index].split('&')]
+        if len(image_paths) != 3:
+            raise RuntimeError("Style training annotation must contain exactly three '&' parts")
+        cached = [self.style_cache.lookup(path) for path in image_paths]
+        hard_styles = np.asarray([item[0] for item in cached], dtype=np.int64)
+        distance_sq = np.stack([item[1] for item in cached]).astype(np.float32)
+        return (image0, labels_out0, image1, labels_out1, image2, labels_out2,
+                image_paths, hard_styles, distance_sq)
 
     def rand(self, a=0, b=1):
         return np.random.rand() * (b - a) + a
@@ -571,9 +588,13 @@ def yolo_dataset_collate(batch):
     bboxes1 = []
     images2 = []
     bboxes2 = []
+    image_paths = []
+    hard_styles = []
+    distance_sq = []
 
     num = 0
-    for i, (img, box, img1, box1, img2, box2) in enumerate(batch):
+    for i, sample in enumerate(batch):
+        img, box, img1, box1, img2, box2 = sample[:6]
             # , img_trip, box_trip, img1_trip, box1_trip, img2_trip, box2_trip) in enumerate(batch):
         images.append(img)
         box[:, 0] = num
@@ -586,6 +607,11 @@ def yolo_dataset_collate(batch):
         images2.append(img2)
         box2[:, 0] = num + 2
         bboxes2.append(box2)
+
+        if len(sample) == 9:
+            image_paths.extend(sample[6])
+            hard_styles.append(sample[7])
+            distance_sq.append(sample[8])
 
         # images_trip.append(img_trip)
         # box_trip[:, 0] = num
@@ -610,6 +636,13 @@ def yolo_dataset_collate(batch):
     images2 = torch.from_numpy(np.array(images2)).type(torch.FloatTensor)
     bboxes2 = torch.from_numpy(np.concatenate(bboxes2, 0)).type(torch.FloatTensor)
 
+    if hard_styles:
+        # Flatten in the same [sample0:S0,S1,S2, sample1:S0,S1,S2, ...]
+        # order used by the Student image concatenation in utils_fit.py.
+        return (images, bboxes, images1, bboxes1, images2, bboxes2,
+                image_paths,
+                torch.from_numpy(np.stack(hard_styles).reshape(-1)).long(),
+                torch.from_numpy(np.stack(distance_sq).reshape(-1, 3)).float())
     return images, bboxes, images1, bboxes1, images2, bboxes2
 
 

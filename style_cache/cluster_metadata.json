@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "num_clusters": 3,
+  "feature_layer": "feat1",
+  "style_vector": "channel_mean_std",
+  "feature_dimension": 256,
+  "input_shape": [
+    640,
+    640
+  ],
+  "distance_type": "squared_euclidean",
+  "distance_scale": 145.11234085098687,
+  "distance_scale_mode": "train_median_min_d2",
+  "kmeans_random_state": 0,
+  "kmeans_n_init": 10,
+  "cluster_implementation": "numpy_fallback",
+  "portable_parameters": "cluster_params.npz",
+  "source_train_files": [
+    "India_train.txt",
+    "Japan_train.txt",
+    "United_States_train.txt"
+  ],
+  "source_val_files": [
+    "India_val.txt",
+    "Japan_val.txt",
+    "United_States_val.txt"
+  ],
+  "style_expert_paths": [
+    "/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_0/best_epoch_weights.pth",
+    "/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_1/best_epoch_weights.pth",
+    "/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_2/best_epoch_weights.pth"
+  ],
+  "style_expert_sha256": [
+    "18a2577a8cad645ed70faa1ee4e99e2e3935b826837f6b02340ddc57761dc9b4",
+    "b2124a1699c24befed8397aafb162519548474b9945e5814e6d5dc3055d5eb7c",
+    "471ac583f1ce3dfac7c28f240f95084a4435b577f9db149e9f8ff9a3fbdb96fc"
+  ],
+  "source_artifact_sha256": {
+    "scaler.pkl": "304d88cf38bc429a0fc65d8a673ec816ad414cfafe2d1ad472ca70167d763963",
+    "kmeans.pkl": "2cb80c1c99abfcd05446c2acd2cee06dca03db0c54593f624b5893b1825db773",
+    "all_train_features.npy": "e8c138e22091e8ab82d00be5659e4aa360e990dcd98d7e0ccecc535af320230f",
+    "all_val_features.npy": "4cd13756975d5b37cf92ea69649399ea413dff5c62b4851a00aef887b1e941a0",
+    "train_pseudo_domain.csv": "ac6bc95138fd2cdb482017b4ce876c6bc2963ec472c1f445f4ed009441949b9d",
+    "val_pseudo_domain.csv": "b92d4492d60f970a54b7c051e3bd8da92a45a7c26890470cae6973c1d88bbab6"
+  },
+  "sample_counts": {
+    "train": 12742,
+    "val": 1592
+  },
+  "hard_label_match_rate": {
+    "train": 1.0,
+    "val": 1.0
+  },
+  "soft_label_match_rate": {
+    "train": 1.0,
+    "val": 1.0
+  },
+  "style_index_mapping": {
+    "0": "Style_0",
+    "1": "Style_1",
+    "2": "Style_2"
+  }
+}

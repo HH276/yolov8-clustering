@@ -296,14 +296,14 @@ def euclidean_dist(x, y):
 
 
 class Discriminator1(nn.Module):
-    def __init__(self, nc=128, ndf=128):
+    def __init__(self, nc=128, ndf=128, input_channels=128):
         super(Discriminator1, self).__init__()
 
         self.fea_project = nn.Sequential(
-            nn.Conv2d(512, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_channels, 128, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU()
-        )  # 512x20x20 => 128 x 32 x 32
+        )  # feat1: 128x80x80 => 128x80x80
 
         self.model = nn.Sequential(
             # input is (nc) x 32 x 32
@@ -323,7 +323,7 @@ class Discriminator1(nn.Module):
 
         )
 
-    def forward(self, x):#x 的size 是 6 * 512 * 20 * 20
+    def forward(self, x):  # x: [B, 128, 80, 80]
         # output = self.model(x)
         x = self.fea_project(x) # torch.Size([6, 128, 42, 42])
         output = self.model(x)   #TODO
@@ -333,15 +333,15 @@ class Discriminator1(nn.Module):
 
 
 class Discriminator2(nn.Module):
-    def __init__(self, nc=128, ndf=128):
+    def __init__(self, nc=128, ndf=128, input_channels=128):
         # def __init__(self, nc=128, ndf=128):
         super(Discriminator2, self).__init__()
 
         self.fea_project = nn.Sequential(
-            nn.Conv2d(512, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_channels, 128, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU()
-        )  # 512x20x20 => 128 x 32 x 32
+        )  # feat1: 128x80x80 => 128x80x80
 
         # self.model = nn.Sequential(
         #     # input is (nc) x 32 x 32
@@ -387,15 +387,15 @@ class Discriminator2(nn.Module):
         return output
 
 class Discriminator3(nn.Module):
-    def __init__(self, nc=128, ndf=128):
+    def __init__(self, nc=128, ndf=128, input_channels=128):
         # def __init__(self, nc=128, ndf=128):
         super(Discriminator3, self).__init__()
 
         self.fea_project = nn.Sequential(
-            nn.Conv2d(512, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_channels, 128, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU()
-        )  # 512x20x20 => 128 x 32 x 32
+        )  # feat1: 128x80x80 => 128x80x80
         self.model = nn.Sequential(
             # input is (nc) x 32 x 32
             nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),

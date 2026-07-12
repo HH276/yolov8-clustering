@@ -32,15 +32,19 @@ from nets.backbone import Backbone
 
 from torch.utils.tensorboard import SummaryWriter
 import os.path as osp
+import json
+import shutil
 from utils.saver import Saver
 from utils.dataloader import YoloDataset_eval,yolo_dataset_collate_eval
 from utils.utils_fit import fit_one_epoch
+from utils.style_cache import StyleDistanceCache
+import dg_config
 # from utils.utils_fit_woUS import fit_one_epoch
 from core.loss import TripletLossCal
 # from core.loss import TripletLossCal_double
 
 # os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
 parser = argparse.ArgumentParser(description="MADDoG")
 # wrq修改自己的datasets--------------------------------------------------------------------------------------------------
@@ -93,7 +97,7 @@ parser.add_argument('--beta2', type=float, default=0.999)
 
 # training configs
 parser.add_argument('--training_type', type=str, default='Train')
-parser.add_argument('--results_path', type=str, default='./logs/Style/260711')
+parser.add_argument('--results_path', type=str, default='./logs/Style_soft/260712/soft_top2_conf')
 # parser.add_argument('--results_path', type=str, default='./logs/5datasets_doamin/20240424')
 # parser.add_argument('--results_path', type=str, default='./logs/5datasets_doamin/tttest_20240419_')
 parser.add_argument('--batch_size', type=int, default=1)
@@ -142,6 +146,18 @@ args = parser.parse_args()
    如果只是训练了几个Step是不会保存的，Epoch和Step的概念要捋清楚一下。
 '''
 if __name__ == "__main__":
+    style_cfg = dg_config.resolve_style_experiment_config()
+    style_cache = StyleDistanceCache(
+        dg_config.STYLE_TRAIN_CACHE, dg_config.STYLE_CLUSTER_METADATA
+    )
+    val_style_cache = StyleDistanceCache(
+        dg_config.STYLE_VAL_CACHE, dg_config.STYLE_CLUSTER_METADATA
+    )
+    experiment_dirname = (
+        f"{style_cfg['experiment_name']}_tau{style_cfg['temperature']}_"
+        f"floor{style_cfg['confidence_floor']}_adv{style_cfg['adv_weight']}"
+    )
+    args.results_path = str(dg_config.PROJECT_ROOT / "logs" / "Style_soft" / "260712" / experiment_dirname)
     # ---------------------------------#
     #   Cuda    是否使用Cuda
     #           没有GPU可以设置成False
@@ -235,7 +251,8 @@ if __name__ == "__main__":
     #                       默认为前70%个epoch，100个世代会开启70个世代。
     # ------------------------------------------------------------------#
     # mosaic = False
-    mosaic = True
+    # Offline style distances are defined for original images, not mosaics.
+    mosaic = False
     mosaic_prob = 0.5
     mixup = False
     # mixup = True
@@ -437,9 +454,13 @@ if __name__ == "__main__":
     # FeatExtS2_restore = osp.join('/disk/home/wurx/yolov8-pytorch-master/results', 'Pre_train', 'snapshots', args.dataset2, 'India.pth')  
     # FeatExtS3_restore = osp.join('/disk/home/wurx/yolov8-pytorch-master/results', 'Pre_train', 'snapshots', args.dataset3, 'United_States.pth')
 
-    PreFeatExtorS1 = init_model(net=FeatExtmodel_pre1, init_type=args.init_type, restore='/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_0/best_epoch_weights.pth').to(device)#BDD10K
-    PreFeatExtorS2 = init_model(net=FeatExtmodel_pre2, init_type=args.init_type, restore='/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_1/best_epoch_weights.pth').to(device)#cityscapes
-    PreFeatExtorS3 = init_model(net=FeatExtmodel_pre3, init_type=args.init_type, restore='/data4/czh/yolov8-cluster/yolov8-hard-clustering/results/Pre_train/Style_2/best_epoch_weights.pth').to(device)#KITTI
+    PreFeatExtorS1 = init_model(net=FeatExtmodel_pre1, init_type=args.init_type, restore=dg_config.STYLE_EXPERT_PATHS[0]).to(device)
+    PreFeatExtorS2 = init_model(net=FeatExtmodel_pre2, init_type=args.init_type, restore=dg_config.STYLE_EXPERT_PATHS[1]).to(device)
+    PreFeatExtorS3 = init_model(net=FeatExtmodel_pre3, init_type=args.init_type, restore=dg_config.STYLE_EXPERT_PATHS[2]).to(device)
+    for expert in (PreFeatExtorS1, PreFeatExtorS2, PreFeatExtorS3):
+        expert.eval()
+        for parameter in expert.parameters():
+            parameter.requires_grad = False
 
     Dis_restore1 = None
     Dis_restore2 = None
@@ -547,6 +568,26 @@ if __name__ == "__main__":
         val_lines = f.readlines()
     num_train = len(train_lines)
     num_val = len(val_lines)
+
+    if local_rank == 0:
+        os.makedirs(save_dir, exist_ok=True)
+        style_snapshot = dict(style_cfg)
+        style_snapshot.update({
+            "distance_scale": style_cache.distance_scale,
+            "train_cache": dg_config.STYLE_TRAIN_CACHE,
+            "val_cache": dg_config.STYLE_VAL_CACHE,
+            "style_expert_paths": dg_config.STYLE_EXPERT_PATHS,
+            "hard_label_match_rate": 1.0,
+            "val_hard_label_match_rate": val_style_cache.match_rate,
+        })
+        with open(os.path.join(save_dir, "style_experiment_config.json"), "w", encoding="utf-8") as f:
+            json.dump(style_snapshot, f, ensure_ascii=False, indent=2)
+        shutil.copy2(dg_config.STYLE_CLUSTER_METADATA,
+                     os.path.join(save_dir, "cluster_metadata.json"))
+        shutil.copy2(dg_config.__file__, os.path.join(save_dir, "config_snapshot.py"))
+        print("\n[Style Experiment]")
+        for key, value in style_snapshot.items():
+            print(f"{key}: {value}")
 
     if local_rank == 0:
         show_config(
@@ -670,7 +711,8 @@ if __name__ == "__main__":
         # ---------------------------------------#
         train_dataset = YoloDataset(train_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
                                     mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob,
-                                    train=True, special_aug_ratio=special_aug_ratio)
+                                    train=True, special_aug_ratio=special_aug_ratio,
+                                    style_cache=style_cache)
         val_dataset = YoloDataset_eval(val_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
                                        mosaic=False, mixup=False, mosaic_prob=0, mixup_prob=0, train=False,
                                        special_aug_ratio=0)
@@ -748,6 +790,7 @@ if __name__ == "__main__":
             # eval_callback = EvalCallback(backbone, model, input_shape, class_names, num_classes, val_lines, log_dir, Cuda, \
             #                              eval_flag=eval_flag, period=eval_period)
             eval_callback = EvalCallback(model, input_shape, class_names, num_classes, val_lines, log_dir, Cuda, \
+                                         map_out_path=os.path.join(log_dir, 'temp_map_out'),
                                          eval_flag=eval_flag, period=eval_period)
         else:
             eval_callback = None
@@ -823,11 +866,37 @@ if __name__ == "__main__":
                           # backbone,FeatEmbder, Discriminator1, Discriminator2, Discriminator3, PreFeatExtorS1,PreFeatExtorS2, PreFeatExtorS3,
                           current_epoch, criterionAdv, args, TripletLossCal, optimizer_critic1,
                           optimizer_critic2, optimizer_critic3, summary_writer, saver,
-
-                          local_rank)
+                          style_cfg=style_cfg, distance_scale=style_cache.distance_scale,
+                          local_rank=local_rank)
 
             if distributed:
                 dist.barrier()
 
         if local_rank == 0:
             loss_history.writer.close()
+
+            try:
+                from types import SimpleNamespace
+                from utils.metrics_summary import generate_summary
+
+                summary_args = SimpleNamespace(
+                    results_path=args.results_path,
+                    results_path_rel=True,
+                    weights_path=os.path.join(save_dir, 'best_epoch_weights.pth'),
+                    classes_path=classes_path,
+                    fps_interval=100,
+                    phi=phi,
+                    input_shape=input_shape,
+                    num_classes=num_classes,
+                    batch_size=Unfreeze_batch_size,
+                    num_train=num_train,
+                    num_val=num_val,
+                    planned_epochs=UnFreeze_Epoch,
+                    style_cfg=style_cfg,
+                    num_gpus=ngpus_per_node if ngpus_per_node > 0 else 1,
+                    map_threshold=0.45,
+                    cpu=False,
+                )
+                generate_summary(log_dir, summary_args)
+            except Exception as e:
+                print(f'[metrics] metrics_summary generation failed: {e}')

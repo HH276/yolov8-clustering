@@ -259,6 +259,24 @@ from .utils import cvtColor, preprocess_input, resize_image
 from .utils_bbox import DecodeBox
 from .utils_map import get_coco_map, get_map
 
+METRICS_EPOCH_FIELDS = [
+    'epoch', 'train_loss', 'val_loss', 'map_50', 'train_time_s', 'val_time_s',
+    'epoch_time_s', 'steps', 'images_per_step', 'train_images_per_s',
+    'loss_yolo', 'loss_triplet', 'loss_critic', 'loss_generator', 'peak_mem_GB',
+]
+
+
+def append_metrics_epoch(log_dir, row):
+    import csv
+    csv_path = os.path.join(log_dir, 'metrics_epoch.csv')
+    write_header = not os.path.isfile(csv_path)
+    os.makedirs(log_dir, exist_ok=True)
+    with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=METRICS_EPOCH_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow({k: row.get(k, '') for k in METRICS_EPOCH_FIELDS})
+
 
 class LossHistory():
     def __init__(self, log_dir, model, input_shape):
@@ -342,6 +360,7 @@ class EvalCallback():
         self.MINOVERLAP = MINOVERLAP
         self.eval_flag = eval_flag
         self.period = period
+        self.last_map_50 = 0.0
 
         self.bbox_util = DecodeBox(self.num_classes, (self.input_shape[0], self.input_shape[1]))
 
@@ -353,7 +372,9 @@ class EvalCallback():
                 f.write("\n")
 
     def get_map_txt(self, image_id, image, class_names, map_out_path):
-        f = open(os.path.join(map_out_path, "detection-results/" + image_id + ".txt"), "w", encoding='utf-8')
+        det_dir = os.path.join(map_out_path, "detection-results")
+        os.makedirs(det_dir, exist_ok=True)
+        f = open(os.path.join(det_dir, image_id + ".txt"), "w", encoding='utf-8')
         image_shape = np.array(np.shape(image)[0:2])
         # ---------------------------------------------------------#
         #   在这里将图像转换成RGB图像，防止灰度图在预测时报错。
@@ -408,68 +429,69 @@ class EvalCallback():
         return
 
     def on_epoch_end(self, epoch, model_eval):
-        if epoch % self.period == 0 and self.eval_flag:
-            self.net = model_eval
-            if not os.path.exists(self.map_out_path):
-                os.makedirs(self.map_out_path)
-            if not os.path.exists(os.path.join(self.map_out_path, "ground-truth")):
-                os.makedirs(os.path.join(self.map_out_path, "ground-truth"))
-            if not os.path.exists(os.path.join(self.map_out_path, "detection-results")):
-                os.makedirs(os.path.join(self.map_out_path, "detection-results"))
-            print("Get map.")
-            for annotation_line in tqdm(self.val_lines):
-                line = annotation_line.split()
-                image_id = os.path.basename(line[0]).split('.')[0]
-                # ------------------------------#
-                #   读取图像并转换成RGB图像
-                # ------------------------------#
-                image = Image.open(line[0])
-                # ------------------------------#
-                #   获得预测框
-                # ------------------------------#
-                gt_boxes = np.array([np.array(list(map(int, box.split(',')))) for box in line[1:]])
-                # ------------------------------#
-                #   获得预测txt
-                # ------------------------------#
-                self.get_map_txt(image_id, image, self.class_names, self.map_out_path)
+        if epoch % self.period != 0 or not self.eval_flag:
+            return self.last_map_50
 
-                # ------------------------------#
-                #   获得真实框txt
-                # ------------------------------#
-                with open(os.path.join(self.map_out_path, "ground-truth/" + image_id + ".txt"), "w") as new_f:
-                    for box in gt_boxes:
-                        left, top, right, bottom, obj = box
-                        obj_name = self.class_names[obj]
-                        new_f.write("%s %s %s %s %s\n" % (obj_name, left, top, right, bottom))
+        self.net = model_eval
+        os.makedirs(self.map_out_path, exist_ok=True)
+        os.makedirs(os.path.join(self.map_out_path, "ground-truth"), exist_ok=True)
+        os.makedirs(os.path.join(self.map_out_path, "detection-results"), exist_ok=True)
+        print("Get map.")
+        for annotation_line in tqdm(self.val_lines):
+            line = annotation_line.split()
+            image_id = os.path.basename(line[0]).split('.')[0]
+            # ------------------------------#
+            #   读取图像并转换成RGB图像
+            # ------------------------------#
+            image = Image.open(line[0])
+            # ------------------------------#
+            #   获得预测框
+            # ------------------------------#
+            gt_boxes = np.array([np.array(list(map(int, box.split(',')))) for box in line[1:]])
+            # ------------------------------#
+            #   获得预测txt
+            # ------------------------------#
+            self.get_map_txt(image_id, image, self.class_names, self.map_out_path)
 
-            print("Calculate Map.")
-            try:
-                temp_map = get_coco_map(class_names=self.class_names, path=self.map_out_path)[1]
-            except:
-                temp_map = get_map(self.MINOVERLAP, False, path=self.map_out_path)
-            print(temp_map)
-            self.maps.append(temp_map)
-            self.epoches.append(epoch)
+            # ------------------------------#
+            #   获得真实框txt
+            # ------------------------------#
+            with open(os.path.join(self.map_out_path, "ground-truth/" + image_id + ".txt"), "w") as new_f:
+                for box in gt_boxes:
+                    left, top, right, bottom, obj = box
+                    obj_name = self.class_names[obj]
+                    new_f.write("%s %s %s %s %s\n" % (obj_name, left, top, right, bottom))
 
-            with open(os.path.join(self.log_dir, "epoch_map.txt"), 'a') as f:
-                f.write(str(temp_map))
-                f.write("\n")
+        print("Calculate Map.")
+        try:
+            temp_map = get_coco_map(class_names=self.class_names, path=self.map_out_path)[1]
+        except Exception:
+            temp_map = get_map(self.MINOVERLAP, False, path=self.map_out_path)
+        print(temp_map)
+        self.last_map_50 = temp_map
+        self.maps.append(temp_map)
+        self.epoches.append(epoch)
 
-            plt.figure()
-            plt.plot(self.epoches, self.maps, 'red', linewidth=2, label='train map')
+        with open(os.path.join(self.log_dir, "epoch_map.txt"), 'a') as f:
+            f.write(str(temp_map))
+            f.write("\n")
 
-            plt.grid(True)
-            plt.xlabel('Epoch')
-            plt.ylabel('Map %s' % str(self.MINOVERLAP))
-            plt.title('A Map Curve')
-            plt.legend(loc="upper right")
+        plt.figure()
+        plt.plot(self.epoches, self.maps, 'red', linewidth=2, label='train map')
 
-            plt.savefig(os.path.join(self.log_dir, "epoch_map.png"))
-            plt.cla()
-            plt.close("all")
+        plt.grid(True)
+        plt.xlabel('Epoch')
+        plt.ylabel('Map %s' % str(self.MINOVERLAP))
+        plt.title('A Map Curve')
+        plt.legend(loc="upper right")
 
-            print("Get map done.")
-            shutil.rmtree(self.map_out_path)
+        plt.savefig(os.path.join(self.log_dir, "epoch_map.png"))
+        plt.cla()
+        plt.close("all")
+
+        print("Get map done.")
+        shutil.rmtree(self.map_out_path, ignore_errors=True)
+        return self.last_map_50
 
 
 import datetime
